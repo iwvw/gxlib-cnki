@@ -1,0 +1,19 @@
+# 会话/密钥
+gxlib_session.json
+config.json
+
+# 下载的文献 PDF（版权内容，不入库）
+fulltext/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 运行时临时文件
+_home.html
+_art.html
+_*.json
+_*.txt
+_*.bin
+*.log
