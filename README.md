@@ -73,6 +73,8 @@ python cnki_fulltext.py browser-trust
 ```bash
 # 高被引（默认已按被引降序）——"影响力高"
 python cnki_fulltext.py search "直播电商" --sort by_cited
+# 英文文献（外文库，Rlang=FOREIGN）
+python cnki_fulltext.py search "live streaming commerce" --lang 外文
 # 核心期刊（来源类别，可多选逗号分隔）
 python cnki_fulltext.py search "直播电商" --core "北大核心"
 python cnki_fulltext.py search "直播电商" --core "CSSCI"

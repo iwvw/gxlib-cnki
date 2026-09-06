@@ -331,6 +331,14 @@ class GxlibCNKI:
         "source": "文献来源", "doi": "DOI",
     }
 
+    # 检索语言（Rlang + 数据库集；外文库与中文库 Products 中第 11 位不同 CSCF/SCSF）
+    LANGUAGE_CONFIG = {
+        "中文": {"rlang": "CHINESE",
+                 "products": "CJFQ,CAPJ,ZHYX,CJTL,CDFD,CMFD,WBFD,CPFD,IPFD,CCND,CSCF,SCHF,SCSD,SNAD,CCJD,CCVD,CJFN"},
+        "外文": {"rlang": "FOREIGN",
+                 "products": "CJFQ,CAPJ,ZHYX,CJTL,CDFD,CMFD,WBFD,CPFD,IPFD,CCND,SCSF,SCHF,SCSD,SNAD,CCJD,CCVD,CJFN"},
+    }
+
     @staticmethod
     def resolve_search_type(search_type):
         """把检索字段中文名/英文别名 → Field 代码。"""
@@ -353,7 +361,8 @@ class GxlibCNKI:
 
     def search(self, keyword, page=1, limit=20, page_size=20,
                source_categories=None, year_from=None, year_to=None,
-               sort_by="被引", sort_order="desc", search_type=None):
+               sort_by="被引", sort_order="desc", search_type=None,
+               language="中文"):
         """程序化检索（POST /kns8s/brief/grid 数据接口），支持精准筛选。
 
         参数：
@@ -361,6 +370,7 @@ class GxlibCNKI:
           search_type      检索字段：主题(默认)/篇关摘/关键词/篇名/全文/作者/第一作者/
                            通讯作者/作者单位/基金/摘要/参考文献/分类号/文献来源/DOI
                            （DOI 在广西图书馆代理不可用，会给出提示）
+          language         检索语言：中文(默认)/外文（外文检索英文文献，Rlang=FOREIGN）
           source_categories 来源类别筛选，str 或 list：北大核心/CSSCI/CSCD/AMI/EI/WJCI
           year_from/year_to 发表年份范围（如 2020 / 2024）
           sort_by           排序：被引(默认)/相关度/下载/综合/发表时间
@@ -371,6 +381,7 @@ class GxlibCNKI:
         if field == "DOI":
             raise RuntimeError("DOI 字段在广西图书馆知网代理不可用（公共站支持）。"
                                "可用 find_best_match 按题名定位，或在主题检索里直接搜 DOI 字符串。")
+        lang_cfg = self.LANGUAGE_CONFIG.get(language) or self.LANGUAGE_CONFIG["中文"]
         self.ensure_cnki_hosts()
         shost = self.host_of("search")
         if not shost:
@@ -415,9 +426,9 @@ class GxlibCNKI:
                                 "ChildItems": []}]})
         qj = {
             "Platform": "", "Resource": "CROSSDB", "Classid": "WD0FTY92",
-            "Products": "CJFQ,CAPJ,ZHYX,CJTL,CDFD,CMFD,WBFD,CPFD,IPFD,CCND,CSCF,SCHF,SCSD,SNAD,CCJD,CCVD,CJFN",
+            "Products": lang_cfg["products"],
             "QNode": {"QGroup": qgroups},
-            "ExScope": 1, "SimpTrad": "0", "SearchType": 2, "Rlang": "CHINESE",
+            "ExScope": 1, "SimpTrad": "0", "SearchType": 2, "Rlang": lang_cfg["rlang"],
             "Expands": {},
             "KuaKuCode": CROSSIDS.replace(",", ","),
             "View": "changeDBCh", "SearchFrom": 5,
@@ -828,9 +839,11 @@ def main():
     p_search.add_argument("--order", default="desc", choices=["desc", "asc"])
     p_search.add_argument("--journals", default="", help="期刊白名单 CSV（一区/二区筛选，如 data/q1_q2_journals.example.csv，读第一列期刊名）")
     p_search.add_argument("--type", default="主题", help="检索字段：主题(默认)/篇关摘/关键词/篇名/全文/作者/第一作者/通讯作者/作者单位/基金/摘要/参考文献/分类号/文献来源")
+    p_search.add_argument("--lang", default="中文", choices=["中文", "外文"], help="检索语言：中文(默认)/外文（英文文献）")
     p_exp = sub.add_parser("export", help="检索并批量导出（json/csv/ris/bibtex，可导入 Zotero/EndNote）")
     p_exp.add_argument("keyword")
     p_exp.add_argument("--type", default="主题")
+    p_exp.add_argument("--lang", default="中文", choices=["中文", "外文"])
     p_exp.add_argument("--core", default="")
     p_exp.add_argument("--years", default="")
     p_exp.add_argument("--sort", default="被引")
@@ -888,7 +901,7 @@ def main():
                 source_categories=args.core or None,
                 year_from=yf, year_to=yt,
                 sort_by=args.sort, sort_order=args.order,
-                search_type=args.type)
+                search_type=args.type, language=args.lang)
             if args.journals:
                 import csv as _csv
                 jf = args.journals if os.path.exists(args.journals) else os.path.join(HERE, args.journals)
@@ -919,7 +932,7 @@ def main():
             papers = api.search(args.keyword, limit=args.limit,
                                 source_categories=args.core or None,
                                 year_from=yf, year_to=yt, sort_by=args.sort,
-                                search_type=args.type)
+                                search_type=args.type, language=args.lang)
             out = api.export_papers(papers, args.fmt)
             if args.out:
                 with open(args.out, "w", encoding="utf-8") as f:

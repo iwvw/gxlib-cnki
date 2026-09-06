@@ -96,12 +96,13 @@ async def search_papers(keyword: str, limit: int = 20,
                         source_categories: str = "",
                         year_from: int = 0, year_to: int = 0,
                         sort_by: str = "被引", sort_order: str = "desc",
-                        search_type: str = "主题") -> str:
+                        search_type: str = "主题", language: str = "中文") -> str:
     """检索知网文献（POST /kns8s/brief/grid）。支持精准筛选。
     参数：
       keyword           检索词
       search_type       检索字段：主题(默认)/篇关摘/关键词/篇名/全文/作者/第一作者/
                         通讯作者/作者单位/基金/摘要/参考文献/分类号/文献来源
+      language          检索语言：中文(默认)/外文（英文文献）
       limit             返回条数（默认 20）
       source_categories 来源类别，逗号分隔：北大核心/CSSCI/CSCD/AMI/EI/WJCI
       year_from/year_to 发表年份范围（如 2020 / 2024；0 表示不限）
@@ -110,32 +111,34 @@ async def search_papers(keyword: str, limit: int = 20,
     返回论文列表 JSON：[{title, url, authors, source, date, db, cited, download}]"""
     return await asyncio.to_thread(
         _search_papers_sync, keyword, limit, source_categories,
-        year_from, year_to, sort_by, sort_order, search_type)
+        year_from, year_to, sort_by, sort_order, search_type, language)
 
 
-def _search_papers_sync(keyword, limit, source_categories, year_from, year_to, sort_by, sort_order, search_type) -> str:
+def _search_papers_sync(keyword, limit, source_categories, year_from, year_to, sort_by, sort_order, search_type, language) -> str:
     papers = api().search(
         keyword, limit=limit,
         source_categories=source_categories or None,
         year_from=year_from or None, year_to=year_to or None,
         sort_by=sort_by, sort_order=sort_order,
-        search_type=search_type or None)
+        search_type=search_type or None, language=language or "中文")
     return json.dumps(papers, ensure_ascii=False, indent=1)
 
 
 @mcp.tool()
 async def export_papers(keyword: str, fmt: str = "json", limit: int = 50,
-                        search_type: str = "主题", source_categories: str = "",
+                        search_type: str = "主题", language: str = "中文",
+                        source_categories: str = "",
                         year_from: int = 0, year_to: int = 0, sort_by: str = "被引") -> str:
     """检索并批量导出（可导入 Zotero/EndNote）。
     fmt: json/csv/ris/bibtex。其余参数同 search_papers。"""
     return await asyncio.to_thread(
-        _export_sync, keyword, fmt, limit, search_type, source_categories,
+        _export_sync, keyword, fmt, limit, search_type, language, source_categories,
         year_from, year_to, sort_by)
 
 
-def _export_sync(keyword, fmt, limit, search_type, source_categories, year_from, year_to, sort_by) -> str:
+def _export_sync(keyword, fmt, limit, search_type, language, source_categories, year_from, year_to, sort_by) -> str:
     papers = api().search(keyword, limit=limit, search_type=search_type or None,
+                          language=language or "中文",
                           source_categories=source_categories or None,
                           year_from=year_from or None, year_to=year_to or None,
                           sort_by=sort_by)
