@@ -309,12 +309,25 @@ class GxlibCNKI:
         return hosts
 
     # ---------- 2. 检索 ----------
-    def search(self, keyword, page=1, limit=20, page_size=20):
-        """程序化检索（POST /kns8s/brief/grid 数据接口）。
+    # 来源类别代码（CNKI 来源标识码，2026-09 实测）
+    CATEGORY_CODES = {
+        "北大核心": "P01", "CSSCI": "P0209", "CSCD": "P0210",
+        "AMI": "P13", "EI": "P0202", "WJCI": "P12",
+    }
+    SORT_CODES = {"相关度": "FFD", "被引": "CF", "下载": "DFR", "综合": "ZH", "发表时间": "PT", "时间": "PT"}
 
-        需要会话带「已验证」信任态（浏览器登录+通过一次滑块后 import-cookies）。
-        未验证会话返回 403 + verify_url（抛 CaptchaError）。
-        返回论文列表：[{title, url, authors, source, date, cited, download}]
+    def search(self, keyword, page=1, limit=20, page_size=20,
+               source_categories=None, year_from=None, year_to=None,
+               sort_by="被引", sort_order="desc"):
+        """程序化检索（POST /kns8s/brief/grid 数据接口），支持精准筛选。
+
+        参数：
+          keyword          检索词（主题）
+          source_categories 来源类别筛选，str 或 list：北大核心/CSSCI/CSCD/AMI/EI/WJCI
+          year_from/year_to 发表年份范围（如 2020 / 2024）
+          sort_by           排序：被引(默认)/相关度/下载/综合/发表时间
+          sort_order        desc(默认)/asc
+        返回论文列表：[{title, url, authors, source, date, db, cited, download}]
         """
         self.ensure_cnki_hosts()
         shost = self.host_of("search")
@@ -330,22 +343,47 @@ class GxlibCNKI:
         for k, v in self.cookies.items():
             s.cookies.set(k, v, domain="res.gxlib.org.cn")
 
+        # 来源类别 → SCDBGroup(可选)
+        cats = []
+        if source_categories:
+            if isinstance(source_categories, str):
+                source_categories = [x.strip() for x in source_categories.replace("，", ",").split(",")]
+            for c in source_categories:
+                if c in self.CATEGORY_CODES:
+                    cats.append((self.CATEGORY_CODES[c], c))
+                else:
+                    raise RuntimeError(f"未知来源类别: {c}（可用：{'/'.join(self.CATEGORY_CODES)}）")
+        qgroups = [{"Key": "Subject", "Title": "", "Logic": 0,
+                    "Items": [{"Field": "SU", "Value": keyword, "Operator": "TOPRANK",
+                               "Logic": 0, "Title": "主题"}], "ChildItems": []}]
+        if year_from or year_to:
+            qgroups[0]["Items"].append({
+                "Field": "PT", "Value": str(year_from or ""), "Value2": str(year_to or ""),
+                "Operator": "BETWEEN", "Logic": 0, "Title": "发表时间"})
+        if cats:
+            qgroups.append({"Key": "SCDBGroup", "Title": "", "Logic": 0, "Items": [],
+                            "ChildItems": [{"Key": "LYBSM", "Title": "", "Logic": 0,
+                                "Items": [{"Key": code, "Title": label, "Logic": 1,
+                                           "Field": "LYBSM", "Operator": "DEFAULT",
+                                           "Value": code, "Value2": "", "Name": "LYBSM",
+                                           "ExtendType": 0} for code, label in cats],
+                                "ChildItems": []}]})
         qj = {
             "Platform": "", "Resource": "CROSSDB", "Classid": "WD0FTY92",
             "Products": "CJFQ,CAPJ,ZHYX,CJTL,CDFD,CMFD,WBFD,CPFD,IPFD,CCND,CSCF,SCHF,SCSD,SNAD,CCJD,CCVD,CJFN",
-            "QNode": {"QGroup": [{"Key": "Subject", "Title": "", "Logic": 0,
-                "Items": [{"Field": "SU", "Value": keyword, "Operator": "TOPRANK",
-                           "Logic": 0, "Title": "主题"}], "ChildItems": []}]},
+            "QNode": {"QGroup": qgroups},
             "ExScope": 1, "SimpTrad": "0", "SearchType": 2, "Rlang": "CHINESE",
             "Expands": {},
             "KuaKuCode": CROSSIDS.replace(",", ","),
             "View": "changeDBCh", "SearchFrom": 5,
         }
+        sort_field = self.SORT_CODES.get(sort_by, "CF")
+        sort_type = sort_order if sort_order in ("asc", "desc") else "desc"
         data = {
             "boolSearch": "false",
             "QueryJson": json.dumps(qj, ensure_ascii=False),
             "pageNum": str(page), "pageSize": str(page_size),
-            "sortField": "CF", "sortType": "desc",
+            "sortField": sort_field, "sortType": sort_type,
             "dstyle": "listmode", "boolSortSearch": "false",
             "productStr": "", "aside": "",
         }
@@ -357,14 +395,21 @@ class GxlibCNKI:
             except Exception:
                 m = r.text
             if "/verify/" in m:
-                raise CaptchaError(m, "（会话未验证：需浏览器登录+过一次滑块后 import-cookies）")
+                raise CaptchaError(m, "（会话未验证：需 browser-trust 后重试）")
             raise RuntimeError(f"检索被拒(403): {m[:120]}")
         if r.status_code != 200:
             raise RuntimeError(f"检索异常 HTTP {r.status_code}")
         body = r.text
-        count_m = re.search(r'([\d,]+)\s*条结果', body)
+        count_m = re.search(r'([\d,]+)\s*条结果', body.replace("<em>", " ").replace("</em>", " "))
         total = count_m.group(1) if count_m else ""
-        # 解析结果行
+
+        def _cell(row, cls):
+            m = re.search(r'<td[^>]*class=["\']' + cls + r'["\'][^>]*>(.*?)</td>', row, re.S)
+            if not m:
+                return ""
+            txt = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.S)
+            return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", txt)).strip()
+
         papers = []
         rows = re.findall(r'<tr[^>]*>(.*?)</tr>', body, re.S)
         for row in rows:
@@ -375,16 +420,15 @@ class GxlibCNKI:
             if url.startswith("/"):
                 url = "https://" + shost + url
             title = re.sub(r"<[^>]+>", "", m.group(2)).strip()
-            authors = re.findall(r'<a[^>]*class="author[^"]*"[^>]*>(.*?)</a>', row, re.S)
-            src_m = re.search(r'class="source"[^>]*>([^<]+)<', row)
-            date_m = re.search(r'class="date"[^>]*>([^<]+)<', row)
-            cit_m = re.search(r'class="citation"[^>]*>([^<]+)<', row)
+            authors = _cell(row, "author").strip(";； ")
             papers.append({
                 "title": title, "url": url,
-                "authors": [re.sub(r"<[^>]+>", "", a) for a in authors],
-                "source": src_m.group(1) if src_m else "",
-                "date": date_m.group(1) if date_m else "",
-                "cited": cit_m.group(1) if cit_m else "",
+                "authors": [a.strip() for a in authors.split(";") if a.strip()],
+                "source": _cell(row, "source"),
+                "date": _cell(row, "date"),
+                "db": _cell(row, "data"),
+                "cited": _cell(row, "quote"),
+                "download": _cell(row, "download"),
             })
         if not papers:
             for m in re.finditer(r'href="(https?://[^"]*?/kcms2/article/abstract\?[^"]+|/kcms2/article/abstract\?[^"]+)"', body):
@@ -493,7 +537,7 @@ class GxlibCNKI:
             if "view.do" in page.url:
                 rl = page.locator('a[href="/ermsLogin/relogin.do"]')
                 if rl.count():
-                    rl.first().click()
+                    rl.first.click()
                     page.wait_for_timeout(3000)
             ok = page.evaluate("document.body.innerText.includes('您好') || document.body.innerText.includes('退出')")
             if not ok:

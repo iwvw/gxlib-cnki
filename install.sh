@@ -13,9 +13,12 @@ source .venv/bin/activate
 
 echo "[3/5] 安装依赖..."
 if [ -n "$MIRROR" ]; then
-  pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+  echo "  使用清华镜像（curl_cffi 等可能缺失，失败自动回退官方 PyPI）..."
+  pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    || { echo "  镜像源失败，改用官方 PyPI ..."; pip install -r requirements.txt \
+           || { echo "  依赖安装失败"; exit 1; }; }
 else
-  pip install -r requirements.txt
+  pip install -r requirements.txt || { echo "  依赖安装失败"; exit 1; }
 fi
 
 echo "[4/5] 安装 Playwright 浏览器内核..."

@@ -2,13 +2,15 @@
 """MCP 协议级测试：stdio 客户端连接 mcp_server.py，列出工具并实际调用。"""
 import asyncio
 import json
+import os
 import sys
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-SERVER = r"D:\Code\gxlib-cnki\mcp_server.py"
-CWD = r"D:\Code\gxlib-cnki"
+HERE = os.path.dirname(os.path.abspath(__file__))
+SERVER = os.path.join(HERE, "mcp_server.py")
+CWD = HERE
 
 
 async def main():

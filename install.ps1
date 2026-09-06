@@ -17,9 +17,16 @@ if (-not (Test-Path ".venv")) { python -m venv .venv }
 
 Write-Host "[3/5] 安装依赖..."
 if ($Mirror) {
+  Write-Host "  使用清华镜像（curl_cffi 等可能缺失，失败自动回退官方 PyPI）..."
   pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "  镜像源失败，改用官方 PyPI ..."
+    pip install -r requirements.txt
+    if ($LASTEXITCODE -ne 0) { Write-Host "  依赖安装失败"; exit 1 }
+  }
 } else {
   pip install -r requirements.txt
+  if ($LASTEXITCODE -ne 0) { Write-Host "  依赖安装失败"; exit 1 }
 }
 
 Write-Host "[4/5] 安装 Playwright 浏览器内核..."

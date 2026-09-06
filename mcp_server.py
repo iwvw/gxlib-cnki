@@ -14,14 +14,19 @@ gxlib-cnki MCP 服务器
       "mcpServers": {
         "gxlib-cnki": {
           "command": "python",
-          "args": ["D:/Code/gxlib-cnki/mcp_server.py"],
-          "cwd": "D:/Code/gxlib-cnki"
+          "args": ["<本文件绝对路径>/mcp_server.py"],
+          "cwd": "<项目目录>"
         }
       }
     }
 
-依赖：mcp（pip install mcp）+ requirements.txt 内依赖。
+注意：
+  - 所有工具均为 async + asyncio.to_thread：底层是同步阻塞调用
+    （curl_cffi / Playwright），不能在 asyncio 事件循环内直接跑，
+    否则 Playwright 会报 "Sync API inside the asyncio loop"。
+  - 依赖：mcp（pip install "mcp>=1.9,<2"）+ requirements.txt 内依赖。
 """
+import asyncio
 import json
 import os
 import sys
@@ -33,7 +38,7 @@ import cnki_fulltext as cf
 try:
     from mcp.server.fastmcp import FastMCP
 except ImportError:
-    raise SystemExit("需要 mcp 包：pip install mcp")
+    raise SystemExit("需要 mcp 包：pip install \"mcp>=1.9,<2\"")
 
 mcp = FastMCP("gxlib-cnki")
 
@@ -49,8 +54,12 @@ def api():
 
 
 @mcp.tool()
-def session_status() -> str:
+async def session_status() -> str:
     """查看当前会话是否有效（信任态是否存在/过期）。返回 JSON。"""
+    return await asyncio.to_thread(_session_status_sync)
+
+
+def _session_status_sync() -> str:
     a = api()
     valid = a._session_valid()
     return json.dumps({
@@ -63,10 +72,15 @@ def session_status() -> str:
 
 
 @mcp.tool()
-def setup_trust(headed: bool = False) -> str:
+async def setup_trust(headed: bool = False) -> str:
     """用 Playwright 建立信任态（登录平台→进知网→检索一次→导出含 HttpOnly 的 cookie）。
     无头默认；若触发滑块，用 headed=True 有头模式人工通过一次。"""
+    return await asyncio.to_thread(_setup_trust_sync, headed)
+
+
+def _setup_trust_sync(headed: bool) -> str:
     a = api()
+    # browser_trust 使用 Playwright 同步 API，必须卸载到工作线程
     a.browser_trust(headless=not headed)
     try:
         a.ensure_cnki_hosts()
@@ -78,32 +92,61 @@ def setup_trust(headed: bool = False) -> str:
 
 
 @mcp.tool()
-def search_papers(keyword: str, limit: int = 20) -> str:
-    """检索知网文献（POST /kns8s/brief/grid）。返回论文列表 JSON：
-    [{title, url, authors, source, date, cited}]。需信任态。"""
-    papers = api().search(keyword, limit=limit)
+async def search_papers(keyword: str, limit: int = 20,
+                        source_categories: str = "",
+                        year_from: int = 0, year_to: int = 0,
+                        sort_by: str = "被引", sort_order: str = "desc") -> str:
+    """检索知网文献（POST /kns8s/brief/grid）。支持精准筛选。
+    参数：
+      keyword           检索词（主题）
+      limit             返回条数（默认 20）
+      source_categories 来源类别，逗号分隔：北大核心/CSSCI/CSCD/AMI/EI/WJCI（如 "北大核心,CSSCI"）
+      year_from/year_to 发表年份范围（如 2020 / 2024；0 表示不限）
+      sort_by           排序：被引(默认)/相关度/下载/综合/发表时间
+      sort_order        desc(默认)/asc
+    返回论文列表 JSON：[{title, url, authors, source, date, db, cited, download}]"""
+    return await asyncio.to_thread(
+        _search_papers_sync, keyword, limit, source_categories, year_from, year_to, sort_by, sort_order)
+
+
+def _search_papers_sync(keyword, limit, source_categories, year_from, year_to, sort_by, sort_order) -> str:
+    papers = api().search(
+        keyword, limit=limit,
+        source_categories=source_categories or None,
+        year_from=year_from or None, year_to=year_to or None,
+        sort_by=sort_by, sort_order=sort_order)
     return json.dumps(papers, ensure_ascii=False, indent=1)
 
 
 @mcp.tool()
-def download_fulltext(article_url: str) -> str:
+async def download_fulltext(article_url: str) -> str:
     """下载文章全文 PDF 到 ./fulltext/。返回文件路径。"""
+    return await asyncio.to_thread(_download_sync, article_url)
+
+
+def _download_sync(article_url: str) -> str:
     path, title = api().download(article_url)
     return json.dumps({"title": title, "pdf_path": path}, ensure_ascii=False, indent=1)
 
 
 @mcp.tool()
-def get_citation(article_url: str) -> str:
+async def get_citation(article_url: str) -> str:
     """获取 CNKI 原始引文（GB/T 7714-2025 / 知网研学 / EndNote）及结构化元数据。"""
-    cites = api().cite(article_url)
-    return json.dumps(cites, ensure_ascii=False, indent=1)
+    return await asyncio.to_thread(_cite_sync, article_url)
+
+
+def _cite_sync(article_url: str) -> str:
+    return json.dumps(api().cite(article_url), ensure_ascii=False, indent=1)
 
 
 @mcp.tool()
-def get_metadata(article_url: str) -> str:
+async def get_metadata(article_url: str) -> str:
     """提取详情页元数据：标题/作者/期刊/摘要/关键词/基金/分类号/文章目录等。"""
-    meta = api().meta(article_url)
-    return json.dumps(meta, ensure_ascii=False, indent=1)
+    return await asyncio.to_thread(_meta_sync, article_url)
+
+
+def _meta_sync(article_url: str) -> str:
+    return json.dumps(api().meta(article_url), ensure_ascii=False, indent=1)
 
 
 if __name__ == "__main__":

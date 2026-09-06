@@ -107,17 +107,19 @@ python cnki_fulltext.py cite <文章URL>
 python cnki_fulltext.py meta <文章URL>
 ```
 
-## 常见问题
+## 常见问题（实测踩坑记录）
 
 | 现象 | 处理 |
 |---|---|
-| `pip install` 超时/失败 | 用清华镜像（见上） |
-| `playwright install chromium` 下载失败 | 设 `PLAYWRIGHT_DOWNLOAD_HOST` 镜像后重试 |
+| **pip 安装失败（清华镜像无 curl_cffi）** | 镜像源部分包缺失是常见现象：`install.ps1 -Mirror` / `MIRROR=1` 已加**自动回退官方 PyPI**；也可手动 `pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple` 失败后去掉 `-i` 重试官方源 |
+| **MCP 里 `setup_trust` 报 "Sync API inside the asyncio loop"** | 已修复：`mcp_server.py` 全部工具改为 `async + asyncio.to_thread`，Playwright/curl_cffi 同步调用卸载到工作线程。若自改代码触发，同样用 `await asyncio.to_thread(同步函数, 参数)` |
+| **报错 `'Locator' object is not callable`** | 代码里 `rl.first().click()` 写错（`first` 是属性不是方法）：应为 `rl.first.click()`。新版 Playwright 才暴露，`browser-trust` 触发 relogin 分支时必现 |
+| **移动/复制目录时被拒（OneDrive 权限）** | OneDrive 目录（`D:\AAADATA\OneDrive - moi\...`）文件访问常被拒，`Move-Item` 报错。改用 `robocopy <源> <目标> /E` 复制后手动删源，或直接放到非 OneDrive 目录（如 `C:\Users\<用户>\tools\`） |
+| **信任态有效期短，移机后失效** | 会话过期是常态：`session-info` 显示无效或 `search` 报会话错误时，重跑 `python cnki_fulltext.py browser-trust`（约 30 秒）即可恢复 |
+| `playwright install chromium` 下载失败 | 设 `PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/` 后重试 |
 | `browser-trust` 触发滑块 | 加 `--headed` 有头模式人工通过一次 |
-| `search` 提示会话无效/需 browser-trust | 信任态已过期，重新跑 `browser-trust` |
 | 提示 `未配置账号密码` | 检查 `config.json` 是否存在、字段名是否正确 |
 | 下载报「授权链返回非PDF」 | 会话过期或该文无 PDF 全文，重新 `browser-trust` 后再试 |
-| 平台要求验证码登录 | 首次建议用 `browser-trust --headed` 人工登录一次 |
 
 ## 注意事项
 
