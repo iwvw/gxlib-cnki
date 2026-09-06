@@ -316,6 +316,33 @@ class GxlibCNKI:
     }
     SORT_CODES = {"相关度": "FFD", "被引": "CF", "下载": "DFR", "综合": "ZH", "发表时间": "PT", "时间": "PT"}
 
+    # 检索字段代码（2026-09 对 grid 接口逐码验证；DOI 在广西图书馆代理不可用）
+    SEARCH_TYPES = {
+        "主题": "SU", "篇关摘": "TKA", "关键词": "KY", "篇名": "TI", "全文": "FT",
+        "作者": "AU", "第一作者": "FI", "通讯作者": "RP", "作者单位": "AF",
+        "基金": "FU", "摘要": "AB", "参考文献": "RF", "分类号": "CLC", "文献来源": "LY",
+        "DOI": "DOI",
+    }
+    SEARCH_TYPE_ALIASES = {
+        "subject": "主题", "theme": "主题", "keyword": "关键词", "keywords": "关键词",
+        "title": "篇名", "author": "作者", "first_author": "第一作者",
+        "corresponding_author": "通讯作者", "affiliation": "作者单位", "institution": "作者单位",
+        "fund": "基金", "abstract": "摘要", "fulltext": "全文", "reference": "参考文献",
+        "source": "文献来源", "doi": "DOI",
+    }
+
+    @staticmethod
+    def resolve_search_type(search_type):
+        """把检索字段中文名/英文别名 → Field 代码。"""
+        if not search_type:
+            return "SU"
+        t = search_type.strip()
+        if t in GxlibCNKI.SEARCH_TYPES:
+            return GxlibCNKI.SEARCH_TYPES[t]
+        if t.lower() in GxlibCNKI.SEARCH_TYPE_ALIASES:
+            return GxlibCNKI.SEARCH_TYPES[GxlibCNKI.SEARCH_TYPE_ALIASES[t.lower()]]
+        raise RuntimeError(f"未知检索字段: {search_type}（可用：{'/'.join(GxlibCNKI.SEARCH_TYPES)}）")
+
     @staticmethod
     def filter_by_journals(papers, journal_list):
         """按期刊白名单过滤检索结果（用于一区/二区等知网无原生字段的筛选）。
@@ -326,17 +353,24 @@ class GxlibCNKI:
 
     def search(self, keyword, page=1, limit=20, page_size=20,
                source_categories=None, year_from=None, year_to=None,
-               sort_by="被引", sort_order="desc"):
+               sort_by="被引", sort_order="desc", search_type=None):
         """程序化检索（POST /kns8s/brief/grid 数据接口），支持精准筛选。
 
         参数：
-          keyword          检索词（主题）
+          keyword          检索词
+          search_type      检索字段：主题(默认)/篇关摘/关键词/篇名/全文/作者/第一作者/
+                           通讯作者/作者单位/基金/摘要/参考文献/分类号/文献来源/DOI
+                           （DOI 在广西图书馆代理不可用，会给出提示）
           source_categories 来源类别筛选，str 或 list：北大核心/CSSCI/CSCD/AMI/EI/WJCI
           year_from/year_to 发表年份范围（如 2020 / 2024）
           sort_by           排序：被引(默认)/相关度/下载/综合/发表时间
           sort_order        desc(默认)/asc
         返回论文列表：[{title, url, authors, source, date, db, cited, download}]
         """
+        field = self.resolve_search_type(search_type)
+        if field == "DOI":
+            raise RuntimeError("DOI 字段在广西图书馆知网代理不可用（公共站支持）。"
+                               "可用 find_best_match 按题名定位，或在主题检索里直接搜 DOI 字符串。")
         self.ensure_cnki_hosts()
         shost = self.host_of("search")
         if not shost:
@@ -362,8 +396,11 @@ class GxlibCNKI:
                 else:
                     raise RuntimeError(f"未知来源类别: {c}（可用：{'/'.join(self.CATEGORY_CODES)}）")
         qgroups = [{"Key": "Subject", "Title": "", "Logic": 0,
-                    "Items": [{"Field": "SU", "Value": keyword, "Operator": "TOPRANK",
-                               "Logic": 0, "Title": "主题"}], "ChildItems": []}]
+                    "Items": [{"Field": field, "Value": keyword,
+                               "Operator": "TOPRANK" if field == "SU" else "DEFAULT",
+                               "Logic": 0,
+                               "Title": next((k for k, v in self.SEARCH_TYPES.items() if v == field), "")}],
+                    "ChildItems": []}]
         if year_from or year_to:
             qgroups[0]["Items"].append({
                 "Field": "PT", "Value": str(year_from or ""), "Value2": str(year_to or ""),
@@ -428,10 +465,15 @@ class GxlibCNKI:
             if url.startswith("/"):
                 url = "https://" + shost + url
             title = re.sub(r"<[^>]+>", "", m.group(2)).strip()
-            authors = _cell(row, "author").strip(";； ")
+            # 作者：按 <a> 锚点边界拆分（单元格内多个作者无分隔符）
+            am = re.search(r'<td[^>]*class=["\']author["\'][^>]*>(.*?)</td>', row, re.S)
+            authors = []
+            if am:
+                authors = [re.sub(r"<[^>]+>", "", x).strip()
+                           for x in re.findall(r'<a[^>]*>(.*?)</a>', am.group(1)) if re.sub(r"<[^>]+>", "", x).strip()]
             papers.append({
                 "title": title, "url": url,
-                "authors": [a.strip() for a in authors.split(";") if a.strip()],
+                "authors": authors,
                 "source": _cell(row, "source"),
                 "date": _cell(row, "date"),
                 "db": _cell(row, "data"),
@@ -443,6 +485,138 @@ class GxlibCNKI:
                 papers.append({"title": "", "url": m.group(1) if m.group(1).startswith("http") else "https://" + shost + m.group(1)})
         self._last_total = total
         return papers[:limit]
+
+    # ---------- 批量导出 / 标题匹配 / 引文格式化 ----------
+    @staticmethod
+    def export_papers(papers, fmt="json"):
+        """论文列表批量导出为 json/csv/ris/bibtex（可导入 Zotero/EndNote）。"""
+        fmt = fmt.lower()
+        if fmt == "json":
+            return json.dumps(papers, ensure_ascii=False, indent=1)
+        if fmt == "csv":
+            import csv as _csv
+            import io
+            buf = io.StringIO()
+            w = _csv.writer(buf)
+            w.writerow(["title", "authors", "source", "date", "db", "cited", "download", "url"])
+            for p in papers:
+                w.writerow([p.get("title", ""), ";".join(p.get("authors", [])), p.get("source", ""),
+                            p.get("date", ""), p.get("db", ""), p.get("cited", ""),
+                            p.get("download", ""), p.get("url", "")])
+            return buf.getvalue()
+        if fmt == "ris":
+            out = []
+            for p in papers:
+                out.append("TY  - JOUR")
+                for a in p.get("authors", []):
+                    out.append(f"AU  - {a}")
+                out.append(f"TI  - {p.get('title', '')}")
+                out.append(f"JO  - {p.get('source', '')}")
+                if p.get("date"):
+                    out.append(f"PY  - {p['date'][:4]}")
+                out.append(f"UR  - {p.get('url', '')}")
+                out.append("ER  -")
+            return "\n".join(out)
+        if fmt in ("bib", "bibtex"):
+            out = []
+            for i, p in enumerate(papers, 1):
+                key = f"cnki{i}"
+                out.append(f"@article{{{key},")
+                out.append(f"  author = {{{' and '.join(p.get('authors', []))}}},")
+                out.append(f"  title = {{{p.get('title', '')}}},")
+                out.append(f"  journal = {{{p.get('source', '')}}},")
+                if p.get("date"):
+                    out.append(f"  year = {{{p['date'][:4]}}},")
+                out.append(f"  url = {{{p.get('url', '')}}}")
+                out.append("}")
+            return "\n".join(out)
+        raise RuntimeError(f"未知导出格式: {fmt}（可用 json/csv/ris/bibtex）")
+
+    def find_best_match(self, title, limit=30):
+        """按题名检索并做字符匹配，定位/验证某篇论文是否在库。
+        返回 [{title, url, source, date, ratio}]，按匹配度降序。"""
+        import difflib
+        papers = self.search(title, search_type="篇名", limit=limit, sort_by="相关度")
+        norm = lambda s: re.sub(r"\s+", "", s or "")
+        out = []
+        for p in papers:
+            ratio = difflib.SequenceMatcher(None, norm(title), norm(p["title"])).ratio()
+            out.append({**p, "ratio": round(ratio, 3)})
+        out.sort(key=lambda x: x["ratio"], reverse=True)
+        return out
+
+    @staticmethod
+    def format_citation(title, authors, source, year, volume="", issue="", pages="",
+                        doi="", style="gbt7714"):
+        """通用引文格式化（独立于 CNKI 原始引文）。
+        style: gbt7714(GB/T 7714-2015) / apa / mla / chicago / vancouver
+        作者输入：字符串（; 或 ，，分隔）或列表；西文作者姓在前时按 Given Family 处理。
+        """
+        if isinstance(authors, str):
+            authors = [a.strip() for a in re.split(r"[;；,，]", authors) if a.strip()]
+        styled = style.lower()
+        if styled in ("gbt7714", "gbt"):
+            # GB/T 7714-2015：作者等. 题名[J]. 刊名, 年, 卷(期): 页码.
+            a = ",".join(authors[:3]) + (",等" if len(authors) > 3 else "")
+            vol = f"{volume}({issue})" if volume and issue else (volume or issue or "")
+            loc = f"{year},{vol}" if vol else str(year)
+            pag = f":{pages}" if pages else ""
+            return f"{a}.{title}[J].{source},{loc}{pag}."
+        if styled == "apa":
+            # APA 7：Author, A. A., & B. B. Author (Year). Title. Journal, Vol(Issue), pages.
+            def apa_name(n):
+                parts = n.split()
+                if len(parts) >= 2 and not re.match(r"^[\u4e00-\u9fa5]+$", n):
+                    return f"{parts[-1]}, {''.join(x[0] + '.' for x in parts[:-1])}"
+                return n
+            a = " & ".join(apa_name(x) for x in authors)
+            vol = f"{volume}({issue})" if volume and issue else (volume or issue or "")
+            loc = f"{vol}, {pages}" if vol and pages else (vol or pages or "")
+            doi_s = f" https://doi.org/{doi}" if doi else ""
+            return f"{a} ({year}). {title}. {source}, {loc}.{doi_s}".replace(", .", ".")
+        if styled == "mla":
+            # MLA 9：Author, A. A., and B. B. Author. "Title." Journal, vol. x, no. y, Year, pp. z.
+            if len(authors) <= 2:
+                a = ", and ".join(authors)
+            elif len(authors) == 3:
+                a = f"{authors[0]}, {authors[1]}, and {authors[2]}"
+            else:
+                a = f"{authors[0]}, et al."
+            parts = []
+            if volume:
+                parts.append(f"vol. {volume}")
+            if issue:
+                parts.append(f"no. {issue}")
+            if year:
+                parts.append(str(year))
+            if pages:
+                parts.append(f"pp. {pages}")
+            return f"{a}. \"{title}.\" {source}, {', '.join(parts)}."
+        if styled == "chicago":
+            # Chicago：Author, A. A., and B. B. Author. "Title." Journal Vol, no. Issue (Year): pages.
+            if len(authors) <= 3:
+                a = ", and ".join(authors) if len(authors) == 2 else ", ".join(authors[:-1]) + ", and " + authors[-1]
+            else:
+                a = f"{authors[0]}, et al."
+            vol = f" {volume}," if volume else ""
+            iss = f" no. {issue}" if issue else ""
+            pag = f": {pages}" if pages else ""
+            return f"{a}. \"{title}.\" {source}{vol}{iss} ({year}){pag}."
+        if styled == "vancouver":
+            # Vancouver：Author AB, Author CD. Title. Journal. Year;Vol(Issue):pages.
+            def van_name(n):
+                if re.match(r"^[\u4e00-\u9fa5]+$", n):
+                    return n
+                parts = n.split()
+                if len(parts) >= 2:
+                    return f"{parts[0]} {''.join(x[0] for x in parts[1:])}"
+                return n
+            a = ", ".join(van_name(x) for x in authors)
+            vol = f"{volume}({issue})" if volume and issue else (volume or issue or "")
+            loc = f"{year};{vol}" if vol else str(year)
+            pag = f":{pages}" if pages else ""
+            return f"{a}. {title}. {source}. {loc}{pag}."
+        raise RuntimeError(f"未知引文风格: {style}（可用 gbt7714/apa/mla/chicago/vancouver）")
 
     # ---------- 3. 下载 ----------
     def fetch_article_page(self, article_url, out_html=None):
@@ -653,6 +827,29 @@ def main():
     p_search.add_argument("--sort", default="被引", help="排序：被引(默认)/相关度/下载/综合/发表时间")
     p_search.add_argument("--order", default="desc", choices=["desc", "asc"])
     p_search.add_argument("--journals", default="", help="期刊白名单 CSV（一区/二区筛选，如 data/q1_q2_journals.example.csv，读第一列期刊名）")
+    p_search.add_argument("--type", default="主题", help="检索字段：主题(默认)/篇关摘/关键词/篇名/全文/作者/第一作者/通讯作者/作者单位/基金/摘要/参考文献/分类号/文献来源")
+    p_exp = sub.add_parser("export", help="检索并批量导出（json/csv/ris/bibtex，可导入 Zotero/EndNote）")
+    p_exp.add_argument("keyword")
+    p_exp.add_argument("--type", default="主题")
+    p_exp.add_argument("--core", default="")
+    p_exp.add_argument("--years", default="")
+    p_exp.add_argument("--sort", default="被引")
+    p_exp.add_argument("--limit", type=int, default=50)
+    p_exp.add_argument("--fmt", default="json", choices=["json", "csv", "ris", "bibtex"])
+    p_exp.add_argument("-o", "--out", default="", help="输出文件；缺省打印到屏幕")
+    p_fm = sub.add_parser("find-match", help="按题名定位/验证某篇论文是否在库（字符匹配）")
+    p_fm.add_argument("title")
+    p_fm.add_argument("--limit", type=int, default=30)
+    p_fc = sub.add_parser("format-citation", help="通用引文格式化（gb/t7714/apa/mla/chicago/vancouver）")
+    p_fc.add_argument("--title", required=True)
+    p_fc.add_argument("--authors", required=True, help="作者，; 或 , 分隔")
+    p_fc.add_argument("--source", required=True, help="期刊/来源")
+    p_fc.add_argument("--year", type=int, required=True)
+    p_fc.add_argument("--volume", default="")
+    p_fc.add_argument("--issue", default="")
+    p_fc.add_argument("--pages", default="")
+    p_fc.add_argument("--doi", default="")
+    p_fc.add_argument("--style", default="gbt7714", choices=["gbt7714", "apa", "mla", "chicago", "vancouver"])
     p_dl = sub.add_parser("download", help="按文章详情页 URL 下载全文 PDF")
     p_dl.add_argument("urls", nargs="+")
     p_dl.add_argument("-o", "--out", default=DEFAULT_OUT)
@@ -690,7 +887,8 @@ def main():
                 args.keyword, limit=args.limit,
                 source_categories=args.core or None,
                 year_from=yf, year_to=yt,
-                sort_by=args.sort, sort_order=args.order)
+                sort_by=args.sort, sort_order=args.order,
+                search_type=args.type)
             if args.journals:
                 import csv as _csv
                 jf = args.journals if os.path.exists(args.journals) else os.path.join(HERE, args.journals)
@@ -710,6 +908,42 @@ def main():
             print("   滑块地址：", e.verify_url)
             print("   也可以手动打开上面的地址完成验证。")
             sys.exit(2)
+
+    elif args.cmd == "export":
+        try:
+            yf = yt = None
+            if args.years:
+                parts = args.years.replace("～", "-").replace("~", "-").split("-")
+                yf = int(parts[0].strip())
+                yt = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else None
+            papers = api.search(args.keyword, limit=args.limit,
+                                source_categories=args.core or None,
+                                year_from=yf, year_to=yt, sort_by=args.sort,
+                                search_type=args.type)
+            out = api.export_papers(papers, args.fmt)
+            if args.out:
+                with open(args.out, "w", encoding="utf-8") as f:
+                    f.write(out)
+                print(f"已导出 {len(papers)} 篇 → {args.out}")
+            else:
+                sys.stdout.write(out + "\n")
+        except CaptchaError as e:
+            print("检索被滑块拦截：", e.verify_url[:120]); sys.exit(2)
+        except Exception as e:
+            print(f"FAIL: {e}")
+
+    elif args.cmd == "find-match":
+        try:
+            matches = api.find_best_match(args.title, limit=args.limit)
+            print(f"题名匹配（共比较 {len(matches)} 条候选）：")
+            for m in matches[:5]:
+                print(f"  {m['ratio']:.2f}  {m['title'][:40]} | {m.get('source','')[:12]} | {m.get('date','')[:10]} | {m['url'][:60]}")
+        except Exception as e:
+            print(f"FAIL: {e}")
+
+    elif args.cmd == "format-citation":
+        print(api.format_citation(args.title, args.authors, args.source, args.year,
+                                  args.volume, args.issue, args.pages, args.doi, args.style))
 
     elif args.cmd == "download":
         for u in args.urls:

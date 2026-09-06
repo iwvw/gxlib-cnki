@@ -62,6 +62,25 @@ async def main():
             d = json.loads(r.content[0].text)
             print("PDF:", d.get("pdf_path", "")[-60:])
 
+            print("\n== 字段检索（篇名）+ 作者拆分 ==")
+            r = await session.call_tool("search_papers", {"keyword": "电商直播中智能属性营销", "search_type": "篇名", "limit": 1})
+            ps = json.loads(r.content[0].text)
+            print("作者:", ps[0].get("authors"), "| 来源:", ps[0].get("source"))
+
+            print("\n== find_best_match ==")
+            r = await session.call_tool("find_best_match", {"title": papers[0]["title"][:30]})
+            ms = json.loads(r.content[0].text)
+            print("top ratio:", ms[0]["ratio"], "|", ms[0]["title"][:30])
+
+            print("\n== export_papers (ris) ==")
+            r = await session.call_tool("export_papers", {"keyword": "直播电商", "fmt": "ris", "limit": 2})
+            print(r.content[0].text[:70].replace("\n", " | "))
+
+            print("\n== format_citation (apa/mla) ==")
+            r = await session.call_tool("format_citation", {"title": "测试", "authors": "孟陆;刘凤军", "source": "南开管理评论",
+                                                            "year": 2020, "volume": "23", "issue": "1", "pages": "131-143", "style": "apa"})
+            print("apa:", r.content[0].text[:60])
+
     print("\n✅ MCP 协议级测试全部通过")
 
 

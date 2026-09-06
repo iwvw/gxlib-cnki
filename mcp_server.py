@@ -95,27 +95,77 @@ def _setup_trust_sync(headed: bool) -> str:
 async def search_papers(keyword: str, limit: int = 20,
                         source_categories: str = "",
                         year_from: int = 0, year_to: int = 0,
-                        sort_by: str = "被引", sort_order: str = "desc") -> str:
+                        sort_by: str = "被引", sort_order: str = "desc",
+                        search_type: str = "主题") -> str:
     """检索知网文献（POST /kns8s/brief/grid）。支持精准筛选。
     参数：
-      keyword           检索词（主题）
+      keyword           检索词
+      search_type       检索字段：主题(默认)/篇关摘/关键词/篇名/全文/作者/第一作者/
+                        通讯作者/作者单位/基金/摘要/参考文献/分类号/文献来源
       limit             返回条数（默认 20）
-      source_categories 来源类别，逗号分隔：北大核心/CSSCI/CSCD/AMI/EI/WJCI（如 "北大核心,CSSCI"）
+      source_categories 来源类别，逗号分隔：北大核心/CSSCI/CSCD/AMI/EI/WJCI
       year_from/year_to 发表年份范围（如 2020 / 2024；0 表示不限）
       sort_by           排序：被引(默认)/相关度/下载/综合/发表时间
       sort_order        desc(默认)/asc
     返回论文列表 JSON：[{title, url, authors, source, date, db, cited, download}]"""
     return await asyncio.to_thread(
-        _search_papers_sync, keyword, limit, source_categories, year_from, year_to, sort_by, sort_order)
+        _search_papers_sync, keyword, limit, source_categories,
+        year_from, year_to, sort_by, sort_order, search_type)
 
 
-def _search_papers_sync(keyword, limit, source_categories, year_from, year_to, sort_by, sort_order) -> str:
+def _search_papers_sync(keyword, limit, source_categories, year_from, year_to, sort_by, sort_order, search_type) -> str:
     papers = api().search(
         keyword, limit=limit,
         source_categories=source_categories or None,
         year_from=year_from or None, year_to=year_to or None,
-        sort_by=sort_by, sort_order=sort_order)
+        sort_by=sort_by, sort_order=sort_order,
+        search_type=search_type or None)
     return json.dumps(papers, ensure_ascii=False, indent=1)
+
+
+@mcp.tool()
+async def export_papers(keyword: str, fmt: str = "json", limit: int = 50,
+                        search_type: str = "主题", source_categories: str = "",
+                        year_from: int = 0, year_to: int = 0, sort_by: str = "被引") -> str:
+    """检索并批量导出（可导入 Zotero/EndNote）。
+    fmt: json/csv/ris/bibtex。其余参数同 search_papers。"""
+    return await asyncio.to_thread(
+        _export_sync, keyword, fmt, limit, search_type, source_categories,
+        year_from, year_to, sort_by)
+
+
+def _export_sync(keyword, fmt, limit, search_type, source_categories, year_from, year_to, sort_by) -> str:
+    papers = api().search(keyword, limit=limit, search_type=search_type or None,
+                          source_categories=source_categories or None,
+                          year_from=year_from or None, year_to=year_to or None,
+                          sort_by=sort_by)
+    return cf.GxlibCNKI.export_papers(papers, fmt)
+
+
+@mcp.tool()
+async def find_best_match(title: str, limit: int = 30) -> str:
+    """按题名检索并字符匹配，定位/验证某篇论文是否在库。
+    返回按匹配度降序的候选 [{title, url, source, date, ratio}]。"""
+    return await asyncio.to_thread(_match_sync, title, limit)
+
+
+def _match_sync(title: str, limit: int) -> str:
+    return json.dumps(api().find_best_match(title, limit=limit), ensure_ascii=False, indent=1)
+
+
+@mcp.tool()
+async def format_citation(title: str, authors: str, source: str, year: int,
+                          volume: str = "", issue: str = "", pages: str = "",
+                          doi: str = "", style: str = "gbt7714") -> str:
+    """通用引文格式化（独立于 CNKI 原始引文）。
+    style: gbt7714(GB/T 7714-2015)/apa/mla/chicago/vancouver。作者用 ; 或 , 分隔。"""
+    return await asyncio.to_thread(
+        _cite_fmt_sync, title, authors, source, year, volume, issue, pages, doi, style)
+
+
+def _cite_fmt_sync(title, authors, source, year, volume, issue, pages, doi, style) -> str:
+    return cf.GxlibCNKI.format_citation(title, authors, source, year,
+                                        volume, issue, pages, doi, style)
 
 
 @mcp.tool()

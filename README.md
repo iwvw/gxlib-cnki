@@ -126,9 +126,12 @@ python cnki_fulltext.py session-info     # 查看当前会话
 | 命令 | 说明 |
 |---|---|
 | `browser-trust [--headed]` | Playwright 建信任态并导出全部 cookie（含 HttpOnly），推荐入口 |
-| `search <关键词>` | 纯 API 检索（POST /kns8s/brief/grid） |
+| `search <关键词> [--type …]` | 检索；`--type` 选字段：主题/篇关摘/关键词/篇名/全文/作者/第一作者/通讯作者/作者单位/基金/摘要/参考文献/分类号/文献来源 |
+| `export <关键词> --fmt ris` | 检索并批量导出 json/csv/ris/bibtex（可导入 Zotero/EndNote），支持全部筛选 |
 | `download <URL...>` | 全文 PDF 下载（授权链 bar→docgateway→docdown） |
-| `cite <URL...>` | CNKI 原始引文 + 元数据（题名/摘要/关键词/机构/卷期页） |
+| `cite <URL...>` | CNKI 原始引文（GB/T 7714-2025 / 知网研学 / EndNote 原文格式） |
+| `format-citation --style apa` | 通用引文格式化：gbt7714(2015)/apa/mla/chicago/vancouver |
+| `find-match <标题>` | 按题名字符匹配，定位/验证某篇论文是否在库 |
 | `meta <URL...>` | 详情页元数据（摘要/关键词/基金/分类号/目录） |
 | `import-cookies <串>` | 覆盖式导入浏览器 document.cookie |
 | `login` / `session-info` | 程序化登录 / 查看会话 |
@@ -155,7 +158,10 @@ python cnki_fulltext.py session-info     # 查看当前会话
 |---|---|
 | `setup_trust(headed)` | 建立信任态（首次/会话过期时调用） |
 | `session_status()` | 检查会话是否有效 |
-| `search_papers(keyword, limit)` | 检索文献 |
+| `search_papers(keyword, limit, search_type, source_categories, year_from, year_to, sort_by, sort_order)` | 检索（15 种字段 + 核心期刊 + 年度 + 排序） |
+| `export_papers(keyword, fmt, …)` | 检索并批量导出 json/csv/ris/bibtex |
+| `find_best_match(title)` | 题名匹配定位论文 |
+| `format_citation(title, authors, …, style)` | 通用引文格式化（gbt7714/apa/mla/chicago/vancouver） |
 | `download_fulltext(url)` | 下载全文 PDF |
 | `get_citation(url)` | CNKI 原始引文（GB/T 7714-2025 等） |
 | `get_metadata(url)` | 摘要/关键词/基金/目录等元数据 |
