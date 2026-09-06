@@ -15,9 +15,15 @@ browser-trust(Playwright) ─→ gxlib_session.json ─→ search / download / c
 
 ## 安装
 
+全新机器从零部署见 **[INSTALL.md](INSTALL.md)**（Python 版本、虚拟环境、国内镜像、首次信任态、常见问题）。
+
+快速开始：
+
 ```bash
 pip install -r requirements.txt
 python -m playwright install chromium
+cp config.example.json config.json   # 填你的证号密码
+python cnki_fulltext.py browser-trust
 ```
 
 ## 配置账号
