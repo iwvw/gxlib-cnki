@@ -66,6 +66,38 @@ python cnki_fulltext.py browser-trust
 
 脚本启动时自动读取；未配置时 `login` / `browser-trust` 会给出提示。
 
+## 精准筛选（影响力/核心期刊）
+
+`search` 支持知网原生筛选，直接对接 grid 数据接口：
+
+```bash
+# 高被引（默认已按被引降序）——"影响力高"
+python cnki_fulltext.py search "直播电商" --sort by_cited
+# 核心期刊（来源类别，可多选逗号分隔）
+python cnki_fulltext.py search "直播电商" --core "北大核心"
+python cnki_fulltext.py search "直播电商" --core "CSSCI"
+python cnki_fulltext.py search "直播电商" --core "北大核心,CSSCI"
+# 年度范围 + 核心 + 高被引（综述"近5年核心高被引"标配）
+python cnki_fulltext.py search "直播电商" --core "北大核心" --years 2020-2024
+```
+
+可用来源类别：`北大核心`、`CSSCI`、`CSCD`、`AMI`、`EI`、`WJCI`（已映射知网来源标识码 P01/P0209/P0210/P13/P0202/P12）。排序：`被引(默认)/相关度/下载/综合/发表时间`，升降序可配。
+
+### 关于「一区/二区」（JCR/中科院分区）
+
+知网**没有**原生的 JCR/中科院分区筛选（那是外部评价体系）。方案：
+
+1. **近似**：用 `--core "北大核心"` 或 `--core "CSSCI"` 作为"核心文献"的知网原生标准。
+2. **精确**：维护一份「期刊→分区」映射表（官方分区表导出 CSV/Excel，取 Q1/Q2 或 一区/二区 的期刊名单），检索后用脚本过滤：
+
+```python
+from cnki_fulltext import GxlibCNKI
+api = GxlibCNKI()
+papers = api.search("直播电商", source_categories="北大核心", year_from=2020, year_to=2024)
+q1 = [j.strip() for j in open("q1_journals.csv", encoding="utf-8")]
+top = GxlibCNKI.filter_by_journals(papers, q1)   # 只保留一区期刊的文章
+```
+
 ## 使用
 
 ```bash

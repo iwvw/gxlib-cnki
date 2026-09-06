@@ -316,6 +316,14 @@ class GxlibCNKI:
     }
     SORT_CODES = {"相关度": "FFD", "被引": "CF", "下载": "DFR", "综合": "ZH", "发表时间": "PT", "时间": "PT"}
 
+    @staticmethod
+    def filter_by_journals(papers, journal_list):
+        """按期刊白名单过滤检索结果（用于一区/二区等知网无原生字段的筛选）。
+        journal_list: 期刊名列表（或 CSV/Excel 分区表导出的 Q1/Q2 期刊集合）。
+        返回 source 命中白名单的论文。"""
+        allow = {j.strip() for j in journal_list if j and j.strip()}
+        return [p for p in papers if p.get("source", "").strip() in allow]
+
     def search(self, keyword, page=1, limit=20, page_size=20,
                source_categories=None, year_from=None, year_to=None,
                sort_by="被引", sort_order="desc"):
@@ -400,7 +408,7 @@ class GxlibCNKI:
         if r.status_code != 200:
             raise RuntimeError(f"检索异常 HTTP {r.status_code}")
         body = r.text
-        count_m = re.search(r'([\d,]+)\s*条结果', body.replace("<em>", " ").replace("</em>", " "))
+        count_m = re.search(r'([\d,]+)\s*条结果', re.sub(r"<[^>]+>", " ", body))
         total = count_m.group(1) if count_m else ""
 
         def _cell(row, cls):
@@ -637,9 +645,13 @@ def main():
     sub.add_parser("login", help="程序化登录（无需浏览器）")
     p_trust = sub.add_parser("browser-trust", help="Playwright 建立信任态（登录+进知网+检索+导出含HttpOnly的cookie）")
     p_trust.add_argument("--headed", action="store_true", help="有头模式（滑块出现时可人工通过）")
-    p_search = sub.add_parser("search", help="检索（遇滑块会抛 CaptchaError 并给出 verify_url）")
+    p_search = sub.add_parser("search", help="检索（支持来源类别/年度/排序筛选）")
     p_search.add_argument("keyword")
     p_search.add_argument("--limit", type=int, default=20)
+    p_search.add_argument("--core", default="", help="来源类别：北大核心/CSSCI/CSCD/AMI/EI/WJCI（逗号分隔可多选）")
+    p_search.add_argument("--years", default="", help="发表年份范围，如 2020-2024")
+    p_search.add_argument("--sort", default="被引", help="排序：被引(默认)/相关度/下载/综合/发表时间")
+    p_search.add_argument("--order", default="desc", choices=["desc", "asc"])
     p_dl = sub.add_parser("download", help="按文章详情页 URL 下载全文 PDF")
     p_dl.add_argument("urls", nargs="+")
     p_dl.add_argument("-o", "--out", default=DEFAULT_OUT)
@@ -668,10 +680,21 @@ def main():
 
     elif args.cmd == "search":
         try:
-            papers = api.search(args.keyword, limit=args.limit)
-            print(f"检索到 {len(papers)} 篇：")
+            yf = yt = None
+            if args.years:
+                parts = args.years.replace("～", "-").replace("~", "-").split("-")
+                yf = int(parts[0].strip())
+                yt = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip() else None
+            papers = api.search(
+                args.keyword, limit=args.limit,
+                source_categories=args.core or None,
+                year_from=yf, year_to=yt,
+                sort_by=args.sort, sort_order=args.order)
+            total = getattr(api, "_last_total", "")
+            print(f"检索到 {len(papers)} 篇（总结果 {total or '?'}）:")
             for i, p in enumerate(papers, 1):
-                print(f"  {i:>2}. {p['title'][:50] or p['url'][:70]}")
+                cited = f" 被引={p['cited']}" if p.get("cited") else ""
+                print(f"  {i:>2}. {p['title'][:44] or p['url'][:60]} | {p.get('source','')[:12]} | {p.get('date','')[:10]}{cited}")
         except CaptchaError as e:
             print("\n!! 检索被知网滑块验证拦截（反爬）。")
             print("   处理方式：请在弹出的浏览器中手动拖动滑块一次，之后本会话自动解锁。")
