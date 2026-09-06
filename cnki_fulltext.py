@@ -652,6 +652,7 @@ def main():
     p_search.add_argument("--years", default="", help="发表年份范围，如 2020-2024")
     p_search.add_argument("--sort", default="被引", help="排序：被引(默认)/相关度/下载/综合/发表时间")
     p_search.add_argument("--order", default="desc", choices=["desc", "asc"])
+    p_search.add_argument("--journals", default="", help="期刊白名单 CSV（一区/二区筛选，如 data/q1_q2_journals.example.csv，读第一列期刊名）")
     p_dl = sub.add_parser("download", help="按文章详情页 URL 下载全文 PDF")
     p_dl.add_argument("urls", nargs="+")
     p_dl.add_argument("-o", "--out", default=DEFAULT_OUT)
@@ -690,6 +691,14 @@ def main():
                 source_categories=args.core or None,
                 year_from=yf, year_to=yt,
                 sort_by=args.sort, sort_order=args.order)
+            if args.journals:
+                import csv as _csv
+                jf = args.journals if os.path.exists(args.journals) else os.path.join(HERE, args.journals)
+                with open(jf, encoding="utf-8-sig") as f:
+                    jlist = [row[0].strip() for row in _csv.reader(f) if row and row[0].strip()]
+                before = len(papers)
+                papers = api.filter_by_journals(papers, jlist)
+                print(f"期刊白名单过滤: {before} → {len(papers)} 篇（名单 {len(jlist)} 刊）")
             total = getattr(api, "_last_total", "")
             print(f"检索到 {len(papers)} 篇（总结果 {total or '?'}）:")
             for i, p in enumerate(papers, 1):

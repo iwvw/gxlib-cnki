@@ -88,15 +88,14 @@ python cnki_fulltext.py search "直播电商" --core "北大核心" --years 2020
 知网**没有**原生的 JCR/中科院分区筛选（那是外部评价体系）。方案：
 
 1. **近似**：用 `--core "北大核心"` 或 `--core "CSSCI"` 作为"核心文献"的知网原生标准。
-2. **精确**：维护一份「期刊→分区」映射表（官方分区表导出 CSV/Excel，取 Q1/Q2 或 一区/二区 的期刊名单），检索后用脚本过滤：
+2. **精确**：维护一份「期刊→分区」名单（官方中科院分区表 / JCR 导出，取 Q1/Q2 或一区/二区的期刊名），放入 `data/` 后用 `--journals` 过滤：
 
-```python
-from cnki_fulltext import GxlibCNKI
-api = GxlibCNKI()
-papers = api.search("直播电商", source_categories="北大核心", year_from=2020, year_to=2024)
-q1 = [j.strip() for j in open("q1_journals.csv", encoding="utf-8")]
-top = GxlibCNKI.filter_by_journals(papers, q1)   # 只保留一区期刊的文章
+```bash
+# 参考 data/q1_q2_journals.example.csv（示例，用官方分区表覆盖）
+python cnki_fulltext.py search "直播电商" --core "北大核心" --years 2020-2024 --journals data/q1_q2_journals.example.csv
 ```
+
+名单格式：CSV 第一列期刊名（与知网来源字段一致），第二列分区仅作参考。脚本读第一列过滤，`data/q1_q2_journals.example.csv` 附示例。
 
 ## 使用
 
