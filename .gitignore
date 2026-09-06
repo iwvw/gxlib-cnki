@@ -9,6 +9,7 @@ fulltext/
 __pycache__/
 *.pyc
 *.pyo
+.venv/
 
 # 运行时临时文件
 _home.html

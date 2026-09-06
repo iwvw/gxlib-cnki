@@ -13,6 +13,33 @@
 browser-trust(Playwright) ─→ gxlib_session.json ─→ search / download / cite / meta (纯 HTTP)
 ```
 
+## 一键安装（新机器）
+
+**Windows（PowerShell）：**
+
+```powershell
+cd gxlib-cnki
+powershell -ExecutionPolicy Bypass -File install.ps1     # 国内网络加速：末尾加 -Mirror
+```
+
+**macOS / Linux：**
+
+```bash
+cd gxlib-cnki
+chmod +x install.sh && ./install.sh                     # 国内网络加速：MIRROR=1 ./install.sh
+```
+
+脚本自动完成：创建虚拟环境 → 装依赖 → 下载 Playwright 浏览器内核 → 生成 `config.json`。装完两步即可用：
+
+```bash
+# 1) 填账号
+#    Windows: notepad config.json     macOS/Linux: vi config.json
+#    {"username": "证号", "password": "密码"}
+
+# 2) 建信任态（首次必需）
+python cnki_fulltext.py browser-trust
+```
+
 ## 安装
 
 全新机器从零部署见 **[INSTALL.md](INSTALL.md)**（Python 版本、虚拟环境、国内镜像、首次信任态、常见问题）。
@@ -74,6 +101,42 @@ python cnki_fulltext.py session-info     # 查看当前会话
 | `meta <URL...>` | 详情页元数据（摘要/关键词/基金/分类号/目录） |
 | `import-cookies <串>` | 覆盖式导入浏览器 document.cookie |
 | `login` / `session-info` | 程序化登录 / 查看会话 |
+
+## MCP 接入（任意 Agent 可直接调用）
+
+`mcp_server.py` 把工具暴露为标准 MCP 服务（stdio），Claude Desktop / Cursor / 任何支持 MCP 的 Agent 都可接入：
+
+```json
+{
+  "mcpServers": {
+    "gxlib-cnki": {
+      "command": "python",
+      "args": ["D:/Code/gxlib-cnki/mcp_server.py"],
+      "cwd": "D:/Code/gxlib-cnki"
+    }
+  }
+}
+```
+
+可用工具：
+
+| 工具 | 说明 |
+|---|---|
+| `setup_trust(headed)` | 建立信任态（首次/会话过期时调用） |
+| `session_status()` | 检查会话是否有效 |
+| `search_papers(keyword, limit)` | 检索文献 |
+| `download_fulltext(url)` | 下载全文 PDF |
+| `get_citation(url)` | CNKI 原始引文（GB/T 7714-2025 等） |
+| `get_metadata(url)` | 摘要/关键词/基金/目录等元数据 |
+
+## Skill 安装（本环境 Agent）
+
+`skills/gxlib-cnki/SKILL.md` 是标准的 Agent Skill 定义（名称/触发词/用法/工作流），复制到 Agent 的 skills 目录即可让本环境的 Agent 按指引使用：
+
+```bash
+# 以本机为例
+cp -r skills/gxlib-cnki ~/.agents/skills/
+```
 
 ## 注意事项
 
