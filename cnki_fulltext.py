@@ -65,6 +65,11 @@ class CaptchaError(Exception):
         super().__init__(f"滑块验证拦截: {verify_url} {detail}")
 
 
+class AccountSuspendedError(Exception):
+    """图书馆账号被平台标记停用（涉嫌恶意下载）。必须立即停止自动化操作，
+    联系图书馆读者服务申诉恢复，切勿继续尝试登录消耗剩余次数。"""
+
+
 class GxlibCNKI:
     def __init__(self, session_file=SESSION_FILE):
         self.session_file = session_file
@@ -184,7 +189,11 @@ class GxlibCNKI:
             self.save_session()
             return True
         if data.get("status") != "ok":
-            raise RuntimeError(f"登录失败: {data.get('msg')}")
+            msg = str(data.get("msg", ""))
+            # 账号被平台反滥用机制标记：立即停止，绝不消耗剩余登录次数
+            if any(k in msg for k in ("恶意", "停用", "联系图书馆", "滥用", "封")):
+                raise AccountSuspendedError(msg)
+            raise RuntimeError(f"登录失败: {msg}")
         self.save_session()
         return True
 
@@ -739,6 +748,11 @@ class GxlibCNKI:
                     pass  # 弹窗未出现则可能已直接登录成功
             ok = page.evaluate("document.body.innerText.includes('您好') || document.body.innerText.includes('退出')")
             if not ok:
+                page_text = page.evaluate("document.body.innerText") or ""
+                if any(k in page_text for k in ("恶意", "停用", "联系图书馆", "滥用")):
+                    browser.close()
+                    raise AccountSuspendedError(
+                        f"账号被平台标记停用（{page_text[:80]}）。立即停止自动操作，联系图书馆申诉恢复。")
                 browser.close()
                 raise RuntimeError("平台登录失败（可能是验证码/账号锁定）")
             # 2) 进知网
