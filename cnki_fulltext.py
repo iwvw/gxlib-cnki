@@ -354,10 +354,11 @@ class GxlibCNKI:
     @staticmethod
     def filter_by_journals(papers, journal_list):
         """按期刊白名单过滤检索结果（用于一区/二区等知网无原生字段的筛选）。
-        journal_list: 期刊名列表（或 CSV/Excel 分区表导出的 Q1/Q2 期刊集合）。
+        journal_list: 期刊名列表（或 data/q1_q2_journals.csv 的名单）。
+        大小写/首尾空白不敏感匹配（CNKI 来源名可能与分区表大小写不同）。
         返回 source 命中白名单的论文。"""
-        allow = {j.strip() for j in journal_list if j and j.strip()}
-        return [p for p in papers if p.get("source", "").strip() in allow]
+        allow = {j.strip().lower() for j in journal_list if j and j.strip()}
+        return [p for p in papers if (p.get("source", "") or "").strip().lower() in allow]
 
     def search(self, keyword, page=1, limit=20, page_size=20,
                source_categories=None, year_from=None, year_to=None,
@@ -726,12 +727,16 @@ class GxlibCNKI:
             page.fill('input[name="userName"]', USERNAME)
             page.fill('input[name="password"]', PASSWORD)
             page.click('input[name="login"]')
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(4000)
+            # 若仍在登录页：可能是 hasLogin，等待 reLogin 弹窗的「登录」链接出现并点击接管
             if "view.do" in page.url:
-                rl = page.locator('a[href="/ermsLogin/relogin.do"]')
-                if rl.count():
+                try:
+                    rl = page.locator('a[href="/ermsLogin/relogin.do"]')
+                    rl.first.wait_for(state="visible", timeout=8000)
                     rl.first.click()
-                    page.wait_for_timeout(3000)
+                    page.wait_for_timeout(4000)
+                except Exception:
+                    pass  # 弹窗未出现则可能已直接登录成功
             ok = page.evaluate("document.body.innerText.includes('您好') || document.body.innerText.includes('退出')")
             if not ok:
                 browser.close()
